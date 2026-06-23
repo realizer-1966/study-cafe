@@ -56,27 +56,41 @@ SESSION_EXPIRE_MINUTES = 240  # 이용 시간 (분)
 
 ## API
 
+### 프론트엔드용
 - `GET /api/seats` - 전체 좌석 현황 JSON
 - `GET /api/my-reservation` - 내 예약 남은 시간 JSON
+
+### 하드웨어용 (출입문 QR 스캐너)
+- `POST /api/door/verify` - QR 토큰 검증 (입실/출실 판단)
+- `POST /api/door/checkin` - 입실 처리 (JSON 반환)
+- `POST /api/door/checkout` - 출실 처리 (JSON 반환)
+
+자세한 내용은 [hardware/README.md](hardware/README.md) 참조
 
 ## 프로젝트 구조
 
 ```
 study_cafe/
-├── app.py                 # Flask 백엔드 (모든 라우트, DB, QR 로직)
+├── app.py                 # Flask 백엔드 (모든 라우트, DB, QR, 하드웨어 API)
 ├── static/
 │   └── css/
 │       └── style.css      # 반응형 스타일시트
-└── templates/
-    ├── base.html           # 공통 레이아웃 (네비게이션)
-    ├── index.html          # 홈 (현황 대시보드)
-    ├── register.html       # 회원가입
-    ├── login.html          # 로그인
-    ├── seats.html          # 좌석 배치도 + 내 예약
-    ├── my_qr.html          # 내 QR 코드 (카운트다운)
-    ├── qr_scan.html        # QR 스캔 페이지 (입실/출실)
-    ├── plans.html          # 이용권 구매
-    ├── payments.html       # 결제 내역
-    ├── admin.html          # 관리자 대시보드
-    └── manage_seats.html   # 좌석 관리 (추가/삭제)
+├── templates/
+│   ├── base.html           # 공통 레이아웃 (네비게이션)
+│   ├── index.html          # 홈 (현황 대시보드)
+│   ├── register.html       # 회원가입
+│   ├── login.html          # 로그인
+│   ├── seats.html          # 좌석 배치도 + 내 예약
+│   ├── my_qr.html          # 내 QR 코드 (카운트다운)
+│   ├── qr_scan.html        # QR 스캔 페이지 (입실/출실)
+│   ├── plans.html          # 이용권 구매
+│   ├── payments.html       # 결제 내역
+│   ├── admin.html          # 관리자 대시보드
+│   └── manage_seats.html   # 좌석 관리 (추가/삭제)
+└── hardware/               # 출입문 QR 스캐너 장치
+    ├── README.md            # 제작 가이드 (부품, 배선, 설치)
+    ├── raspberry_pi/
+    │   └── door_controller.py   # RPi 컨트롤러 (카메라 QR 인식 + 릴레이)
+    └── esp32/
+        └── door_controller_esp32.ino  # ESP32 컨트롤러 (QR 모듈 + 릴레이)
 ```

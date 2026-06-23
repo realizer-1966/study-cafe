@@ -811,6 +811,200 @@ def api_my_reservation():
 
 
 # ---------------------------------------------------------------------------
+# Hardware API — QR 스캐너 장치용 JSON 엔드포인트
+# ---------------------------------------------------------------------------
+# 출입문 장치(Raspberry Pi / ESP32)가 QR 토큰을 전송하면
+# JSON으로 결과를 반환. 브라우저용(/qr/checkin)과 분리됨.
+#
+# 사용 방법:
+#   POST /api/door/checkin   {"token": "xxx"}   → 입실
+#   POST /api/door/checkout  {"token": "xxx"}   → 출실
+#   POST /api/door/verify    {"token": "xxx"}   → 상태만 확인 (문 개폐 X)
+#
+# 성공 응답:
+#   {"success": true, "action": "checkin", "seat_number": "A1",
+#    "username": "hong", "remaining_seconds": 14399, "message": "입실 완료"}
+#
+# 실패 응답:
+#   {"success": false, "error": "QR 코드가 만료되었습니다"}
+
+@app.route("/api/door/verify", methods=["POST"])
+def api_door_verify():
+    """QR 토큰 검증만 수행 (문 개폐하지 않음). 스캐너가 미리 확인용."""
+    data = request.get_json(silent=True) or {}
+    token = data.get("token", "").strip()
+    if not token:
+        return jsonify({"success": False, "error": "토큰이 없습니다."}), 400
+
+    db = get_db()
+    auto_expire_reservations(db)
+    res = db.execute(
+        """SELECT r.*, s.seat_number, s.zone, u.username
+           FROM reservations r
+           JOIN seats s ON r.seat_id=s.id
+           JOIN users u ON r.user_id=u.id
+           WHERE r.qr_token=?""",
+        (token,),
+    ).fetchone()
+    if not res:
+        return jsonify({"success": False, "error": "유효하지 않은 QR 코드입니다."}), 404
+
+    if res["status"] in ("cancelled", "completed"):
+        return jsonify({"success": False, "error": "이 예약은 이미 종료되었습니다."})
+    if res["status"] == "expired":
+        return jsonify({"success": False, "error": "QR 코드가 만료되었습니다."})
+    if res["status"] == "session_expired":
+        return jsonify({"success": False, "error": "이용 시간이 종료되었습니다."})
+
+    if res["status"] == "reserved":
+        remaining = calc_remaining_seconds(res["qr_expires_at"])
+        return jsonify({
+            "success": True,
+            "action": "checkin_ready",
+            "seat_number": res["seat_number"],
+            "zone": res["zone"],
+            "username": res["username"],
+            "remaining_seconds": remaining,
+            "message": f"입실 가능 — {res['seat_number']} 좌석"
+        })
+    elif res["status"] == "checked_in":
+        remaining = calc_remaining_seconds(res["session_expires_at"])
+        return jsonify({
+            "success": True,
+            "action": "checkout_ready",
+            "seat_number": res["seat_number"],
+            "zone": res["zone"],
+            "username": res["username"],
+            "remaining_seconds": remaining,
+            "message": f"퇴실 가능 — {res['seat_number']} 좌석"
+        })
+    return jsonify({"success": False, "error": "알 수 없는 상태입니다."})
+
+
+@app.route("/api/door/checkin", methods=["POST"])
+def api_door_checkin():
+    """하드웨어 QR 스캐너용 입실 API — JSON 반환."""
+    data = request.get_json(silent=True) or {}
+    token = data.get("token", "").strip()
+    if not token:
+        return jsonify({"success": False, "error": "토큰이 없습니다."}), 400
+
+    db = get_db()
+    auto_expire_reservations(db)
+    res = db.execute(
+        """SELECT r.*, s.seat_number, s.zone, u.username
+           FROM reservations r
+           JOIN seats s ON r.seat_id=s.id
+           JOIN users u ON r.user_id=u.id
+           WHERE r.qr_token=? AND r.status='reserved'""",
+        (token,),
+    ).fetchone()
+    if not res:
+        # 이미 만료되었는지 확인
+        expired_res = db.execute(
+            "SELECT status FROM reservations WHERE qr_token=?", (token,)
+        ).fetchone()
+        if expired_res:
+            if expired_res["status"] == "expired":
+                return jsonify({"success": False, "error": "QR 코드가 만료되었습니다."})
+            if expired_res["status"] == "checked_in":
+                return jsonify({"success": False, "error": "이미 입실 중입니다. 퇴실 QR을 스캔하세요."})
+            return jsonify({"success": False, "error": f"입실할 수 없습니다. 상태: {expired_res['status']}"})
+        return jsonify({"success": False, "error": "유효하지 않은 QR 코드입니다."}), 404
+
+    # 만료 체크
+    if res["qr_expires_at"]:
+        remaining = calc_remaining_seconds(res["qr_expires_at"])
+        if remaining is not None and remaining <= 0:
+            db.execute("UPDATE reservations SET status='expired' WHERE id=?", (res["id"],))
+            db.commit()
+            return jsonify({"success": False, "error": "QR 코드가 만료되었습니다."})
+
+    # 좌석 확인
+    seat = db.execute("SELECT * FROM seats WHERE id=?", (res["seat_id"],)).fetchone()
+    if seat["is_occupied"]:
+        return jsonify({"success": False, "error": "해당 좌석이 이미 사용 중입니다."})
+
+    # 입실 처리
+    now = datetime.now()
+    session_expires = now + timedelta(minutes=SESSION_EXPIRE_MINUTES)
+    db.execute(
+        """UPDATE reservations SET check_in_time=?, status='checked_in', session_expires_at=?
+           WHERE id=?""",
+        (fmt(now), fmt(session_expires), res["id"]),
+    )
+    db.execute(
+        "UPDATE seats SET is_occupied=1, current_user_id=?, occupied_since=? WHERE id=?",
+        (res["user_id"], fmt(now), res["seat_id"]),
+    )
+    db.commit()
+
+    remaining = calc_remaining_seconds(fmt(session_expires))
+    return jsonify({
+        "success": True,
+        "action": "checkin",
+        "seat_number": res["seat_number"],
+        "zone": res["zone"],
+        "username": res["username"],
+        "remaining_seconds": remaining,
+        "session_expires_at": fmt(session_expires),
+        "message": f"입실 완료 — {res['seat_number']} 좌석 (이용시간 {SESSION_EXPIRE_MINUTES}분)"
+    })
+
+
+@app.route("/api/door/checkout", methods=["POST"])
+def api_door_checkout():
+    """하드웨어 QR 스캐너용 출실 API — JSON 반환."""
+    data = request.get_json(silent=True) or {}
+    token = data.get("token", "").strip()
+    if not token:
+        return jsonify({"success": False, "error": "토큰이 없습니다."}), 400
+
+    db = get_db()
+    auto_expire_reservations(db)
+    res = db.execute(
+        """SELECT r.*, s.seat_number, s.zone, u.username
+           FROM reservations r
+           JOIN seats s ON r.seat_id=s.id
+           JOIN users u ON r.user_id=u.id
+           WHERE r.qr_token=? AND r.status='checked_in'""",
+        (token,),
+    ).fetchone()
+    if not res:
+        expired_res = db.execute(
+            "SELECT status FROM reservations WHERE qr_token=?", (token,)
+        ).fetchone()
+        if expired_res:
+            if expired_res["status"] == "session_expired":
+                return jsonify({"success": False, "error": "이용 시간이 종료되었습니다."})
+            if expired_res["status"] == "reserved":
+                return jsonify({"success": False, "error": "아직 입실하지 않았습니다."})
+            if expired_res["status"] == "completed":
+                return jsonify({"success": False, "error": "이미 퇴실 처리되었습니다."})
+            return jsonify({"success": False, "error": f"출실할 수 없습니다. 상태: {expired_res['status']}"})
+        return jsonify({"success": False, "error": "유효하지 않은 QR 코드입니다."}), 404
+
+    now = fmt(datetime.now())
+    db.execute(
+        "UPDATE reservations SET check_out_time=?, status='completed' WHERE id=?",
+        (now, res["id"]),
+    )
+    db.execute(
+        "UPDATE seats SET is_occupied=0, current_user_id=NULL, occupied_since=NULL WHERE id=?",
+        (res["seat_id"],),
+    )
+    db.commit()
+
+    return jsonify({
+        "success": True,
+        "action": "checkout",
+        "seat_number": res["seat_number"],
+        "username": res["username"],
+        "message": f"출실 완료 — {res['seat_number']} 좌석"
+    })
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
