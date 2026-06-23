@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}결제내역 - Study Cafe{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>💳 결제 내역</h2>
+  {% if payments %}
+    <div class="stats-grid" style="grid-template-columns: 1fr;">
+      <div class="stat-card">
+        <div class="stat-value">{{ "{:,}".format(total) }}원</div>
+        <div class="stat-label">총 결제 금액</div>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>결제일</th>
+          <th>항목</th>
+          <th>금액</th>
+          <th>유형</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in payments %}
+        <tr>
+          <td>{{ p.created_at }}</td>
+          <td>{{ p.description }}</td>
+          <td>{{ "{:,}".format(p.amount) }}원</td>
+          <td>
+            {% if p.payment_type == 'plan' %}
+              <span class="badge badge-active">이용권</span>
+            {% else %}
+              <span class="badge badge-available">기타</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p style="text-align:center; color: var(--text-light);">결제 내역이 없습니다.</p>
+  {% endif %}
+</div>
+{% endblock %}

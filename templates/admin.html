@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}관리자 - Study Cafe{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>📈 관리자 대시보드</h2>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-value">{{ total_users }}</div>
+      <div class="stat-label">회원 수</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{ occupied_seats }}/{{ total_seats }}</div>
+      <div class="stat-label">좌석 사용</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{ "{:,}".format(today_revenue) }}원</div>
+      <div class="stat-label">오늘 매출</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{ "{:,}".format(total_revenue) }}원</div>
+      <div class="stat-label">총 매출</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{ active_subs }}</div>
+      <div class="stat-label">활성 이용권</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{ active_reservations }}</div>
+      <div class="stat-label">활성 예약</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" style="color: var(--danger)">{{ expired_count }}</div>
+      <div class="stat-label">만료/종료</div>
+    </div>
+  </div>
+  <div style="text-align: center; font-size: 0.85rem; color: var(--text-light); margin-top: 0.5rem;">
+    ⏱️ 체크인 대기: {{ qr_expire_minutes }}분 | 이용 시간: {{ session_expire_minutes }}분
+  </div>
+</div>
+
+<div class="card">
+  <h2>🪑 좌석 현황 상세</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>좌석</th>
+        <th>구역</th>
+        <th>상태</th>
+        <th>사용자</th>
+        <th>사용 시작</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for seat in seats %}
+      <tr>
+        <td>{{ seat.seat_number }}</td>
+        <td>{{ seat.zone }}</td>
+        <td>
+          {% if seat.is_occupied %}
+            <span class="badge badge-occupied">사용 중</span>
+          {% else %}
+            <span class="badge badge-available">비어있음</span>
+          {% endif %}
+        </td>
+        <td>{{ seat.username or '-' }}</td>
+        <td>{{ seat.occupied_since or '-' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>💰 최근 결제 내역</h2>
+  {% if recent_payments %}
+  <table>
+    <thead>
+      <tr>
+        <th>결제일</th>
+        <th>사용자</th>
+        <th>항목</th>
+        <th>금액</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in recent_payments %}
+      <tr>
+        <td>{{ p.created_at }}</td>
+        <td>{{ p.username }}</td>
+        <td>{{ p.description }}</td>
+        <td>{{ "{:,}".format(p.amount) }}원</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color: var(--text-light);">결제 내역이 없습니다.</p>
+  {% endif %}
+</div>
+
+{% if daily_rev %}
+<div class="card">
+  <h2>📊 최근 7일 매출</h2>
+  <table>
+    <thead>
+      <tr><th>날짜</th><th>매출</th></tr>
+    </thead>
+    <tbody>
+      {% for d in daily_rev %}
+      <tr>
+        <td>{{ d.day }}</td>
+        <td>{{ "{:,}".format(d.total) }}원</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>📝 최근 예약 현황 (QR 입출입)</h2>
+  {% if recent_res %}
+  <table>
+    <thead>
+      <tr>
+        <th>좌석</th>
+        <th>사용자</th>
+        <th>예약 시간</th>
+        <th>입실</th>
+        <th>출실</th>
+        <th>남은 시간</th>
+        <th>상태</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in recent_res %}
+      <tr>
+        <td>{{ r.seat_number }}</td>
+        <td>{{ r.username }}</td>
+        <td>{{ r.start_time }}</td>
+        <td>{{ r.check_in_time or '-' }}</td>
+        <td>{{ r.check_out_time or '-' }}</td>
+        <td style="font-weight: 600; color: {% if r.remaining == '-' %}var(--text-light){% else %}var(--primary){% endif %};">{{ r.remaining }}</td>
+        <td>
+          {% if r.status == 'reserved' %}
+            <span class="badge badge-available">예약됨</span>
+          {% elif r.status == 'checked_in' %}
+            <span class="badge badge-occupied">입실 중</span>
+          {% elif r.status == 'completed' %}
+            <span class="badge badge-active">완료</span>
+          {% elif r.status == 'cancelled' %}
+            <span class="badge badge-expired">취소</span>
+          {% elif r.status == 'expired' %}
+            <span class="badge badge-expired">QR만료</span>
+          {% elif r.status == 'session_expired' %}
+            <span class="badge badge-expired">이용만료</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color: var(--text-light);">예약 내역이 없습니다.</p>
+  {% endif %}
+</div>
+{% endblock %}

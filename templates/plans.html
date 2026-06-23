@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}이용권 - Study Cafe{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>🎟️ 이용권 구매</h2>
+  <div class="plan-grid">
+    {% for plan in plans %}
+    <div class="plan-card">
+      <div class="plan-name">{{ plan.name }}</div>
+      <div class="plan-price">{{ "{:,}".format(plan.price) }}<span class="won">원</span></div>
+      <div class="plan-desc">{{ plan.description }}<br>{{ plan.duration_days }}일 이용 가능</div>
+      <form method="POST" action="{{ url_for('purchase_plan', plan_id=plan.id) }}" style="margin-top:1rem;">
+        <button type="submit" class="btn btn-primary btn-block">구매하기</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <h2>📋 내 이용권</h2>
+  {% if my_subs %}
+    <table>
+      <thead>
+        <tr>
+          <th>이용권</th>
+          <th>시작일</th>
+          <th>종료일</th>
+          <th>상태</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for sub in my_subs %}
+          <tr>
+            <td>{{ sub.plan_name }}</td>
+            <td>{{ sub.start_date }}</td>
+            <td>{{ sub.end_date }}</td>
+            <td><span class="badge badge-active">활성</span></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p style="text-align:center; color: var(--text-light);">구매한 이용권이 없습니다.</p>
+  {% endif %}
+</div>
+{% endblock %}

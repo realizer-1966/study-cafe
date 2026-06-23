@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}좌석 관리 - Study Cafe{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>⚙️ 좌석 관리</h2>
+  <form method="POST" action="{{ url_for('add_seat') }}" style="display:flex; gap:0.5rem; margin-bottom:1.5rem; flex-wrap:wrap;">
+    <input type="text" name="seat_number" placeholder="좌석 번호 (예: E1)" required
+           style="padding:8px 12px; border:2px solid var(--border); border-radius:8px; font-size:0.9rem; flex:1; min-width:120px;">
+    <select name="zone" style="padding:8px 12px; border:2px solid var(--border); border-radius:8px; font-size:0.9rem;">
+      <option value="일반">일반</option>
+      <option value="프리미엄">프리미엄</option>
+      <option value="그룹">그룹</option>
+    </select>
+    <button type="submit" class="btn btn-primary">좌석 추가</button>
+  </form>
+
+  <table>
+    <thead>
+      <tr>
+        <th>좌석 번호</th>
+        <th>구역</th>
+        <th>상태</th>
+        <th>관리</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for seat in seats %}
+      <tr>
+        <td>{{ seat.seat_number }}</td>
+        <td>{{ seat.zone }}</td>
+        <td>
+          {% if seat.is_occupied %}
+            <span class="badge badge-occupied">사용 중</span>
+          {% else %}
+            <span class="badge badge-available">비어있음</span>
+          {% endif %}
+        </td>
+        <td>
+          <form method="POST" action="{{ url_for('delete_seat', seat_id=seat.id) }}"
+                style="display:inline;"
+                onsubmit="return confirm('좌석 {{ seat.seat_number }}을 삭제하시겠습니까?')">
+            <button type="submit" class="btn btn-danger btn-sm">삭제</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

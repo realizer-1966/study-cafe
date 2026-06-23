@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Study Cafe{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <nav class="navbar">
+    <a href="{{ url_for('index') }}" class="navbar-brand">📚 Study Cafe</a>
+    <div class="navbar-links">
+      <a href="{{ url_for('index') }}" class="{{ 'active' if request.endpoint == 'index' }}">홈</a>
+      <a href="{{ url_for('seat_map') }}" class="{{ 'active' if request.endpoint == 'seat_map' }}">좌석</a>
+      <a href="{{ url_for('my_qr') }}" class="{{ 'active' if request.endpoint == 'my_qr' }}">내 QR</a>
+      <a href="{{ url_for('plans') }}" class="{{ 'active' if request.endpoint == 'plans' }}">이용권</a>
+      {% if session.get('user_id') %}
+        <a href="{{ url_for('payment_history') }}" class="{{ 'active' if request.endpoint == 'payment_history' }}">결제내역</a>
+        {% if session.get('is_admin') %}
+          <a href="{{ url_for('admin_dashboard') }}" class="{{ 'active' if request.endpoint == 'admin_dashboard' }}">관리자</a>
+          <a href="{{ url_for('manage_seats') }}" class="{{ 'active' if request.endpoint == 'manage_seats' }}">좌석관리</a>
+        {% endif %}
+        <a href="{{ url_for('logout') }}">로그아웃</a>
+      {% else %}
+        <a href="{{ url_for('login') }}" class="{{ 'active' if request.endpoint == 'login' }}">로그인</a>
+        <a href="{{ url_for('register') }}" class="{{ 'active' if request.endpoint == 'register' }}">회원가입</a>
+      {% endif %}
+    </div>
+  </nav>
+
+  <div class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, msg in messages %}
+          <div class="flash {{ category }}">{{ msg }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

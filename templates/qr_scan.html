@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR 스캔 - Study Cafe</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <nav class="navbar">
+    <a href="{{ url_for('index') }}" class="navbar-brand">📚 Study Cafe</a>
+    <div class="navbar-links">
+      <a href="{{ url_for('index') }}">홈</a>
+      <a href="{{ url_for('seat_map') }}">좌석</a>
+      <a href="{{ url_for('my_qr') }}">내 QR</a>
+    </div>
+  </nav>
+
+  <div class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, msg in messages %}
+          <div class="flash {{ category }}">{{ msg }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    {% if error %}
+      <div class="card" style="max-width: 480px; margin: 2rem auto; text-align: center;">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">❌</div>
+        <h2 style="margin-bottom: 1rem;">오류</h2>
+        <p style="color: var(--danger); font-size: 1.1rem;">{{ error }}</p>
+        {% if reservation %}
+          <p style="color: var(--text-light); margin-top: 1rem;">
+            좌석: {{ reservation.seat_number }} ({{ reservation.zone }})<br>
+            예약자: {{ reservation.username }}<br>
+            상태: {{ reservation.status }}
+          </p>
+        {% endif %}
+        <a href="{{ url_for('index') }}" class="btn btn-primary" style="margin-top: 1.5rem;">홈으로</a>
+      </div>
+    {% elif reservation %}
+      <div class="card" style="max-width: 480px; margin: 2rem auto; text-align: center;">
+        <div style="font-size: 3rem; margin-bottom: 0.5rem;">
+          {% if reservation.status == 'reserved' %}📥{% elif reservation.status == 'checked_in' %}📤{% endif %}
+        </div>
+        <h2 style="margin-bottom: 0.5rem;">
+          {% if reservation.status == 'reserved' %}입실 확인{% elif reservation.status == 'checked_in' %}출실 확인{% endif %}
+        </h2>
+
+        <div style="background: #f8fafc; border-radius: 12px; padding: 1.2rem; margin: 1rem 0;">
+          <div style="font-size: 2rem; font-weight: 700; color: var(--primary);">
+            {{ reservation.seat_number }}
+          </div>
+          <div style="color: var(--text-light);">{{ reservation.zone }} zone</div>
+          <div style="margin-top: 8px; font-size: 0.9rem; color: var(--text-light);">
+            예약자: <strong>{{ reservation.username }}</strong>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--text-light); margin-top: 4px;">
+            예약 시간: {{ reservation.start_time }}
+          </div>
+          {% if reservation.check_in_time %}
+            <div style="font-size: 0.85rem; color: var(--success); margin-top: 4px;">
+              입실 시간: {{ reservation.check_in_time }}
+            </div>
+          {% endif %}
+        </div>
+
+        <!-- 남은 시간 표시 -->
+        {% if remaining is not none %}
+        <div id="timer-box" style="background: {% if reservation.status == 'reserved' %}#dbeafe{% else %}#fef3c7{% endif %}; border-radius: 12px; padding: 1rem; margin: 1rem 0;">
+          <div style="font-size: 0.85rem; color: var(--text-light); margin-bottom: 4px;">
+            {{ remaining_label }}
+          </div>
+          <div id="countdown" style="font-size: 1.5rem; font-weight: 700; color: {% if reservation.status == 'reserved' %}var(--primary){% else %}#92400e{% endif %};">
+            {{ format_remaining(remaining) }}
+          </div>
+          {% if remaining is not none and remaining <= 0 %}
+            <div style="color: var(--danger); font-weight: 600; margin-top: 4px;">만료됨</div>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        {% if reservation.status == 'reserved' and remaining is not none and remaining > 0 %}
+          <form method="POST" action="{{ url_for('qr_checkin') }}">
+            <input type="hidden" name="token" value="{{ token }}">
+            <button type="submit" class="btn btn-success btn-block" style="font-size: 1.1rem; padding: 14px;">
+              ✅ 입실하기
+            </button>
+          </form>
+        {% elif reservation.status == 'checked_in' and remaining is not none and remaining > 0 %}
+          <form method="POST" action="{{ url_for('qr_checkout') }}">
+            <input type="hidden" name="token" value="{{ token }}">
+            <button type="submit" class="btn btn-danger btn-block" style="font-size: 1.1rem; padding: 14px;">
+              🚪 퇴실하기
+            </button>
+          </form>
+        {% elif remaining is not none and remaining <= 0 %}
+          <div class="flash error" style="margin-top: 1rem;">
+            ⚠️ 시간이 만료되었습니다.
+            {% if reservation.status == 'reserved' %}
+              QR 코드가 만료되었습니다. 다시 예약해주세요.
+            {% else %}
+              이용 시간이 종료되었습니다.
+            {% endif %}
+          </div>
+        {% endif %}
+
+        <a href="{{ url_for('index') }}" class="btn btn-outline btn-sm" style="margin-top: 1rem;">홈으로</a>
+      </div>
+    {% else %}
+      <div class="card" style="max-width: 480px; margin: 2rem auto; text-align: center;">
+        <h2>QR 스캔</h2>
+        <p style="color: var(--text-light);">QR 코드를 스캔하여 입실/퇴실하세요.</p>
+      </div>
+    {% endif %}
+  </div>
+
+  {% if reservation and remaining is not none and remaining > 0 %}
+  <script>
+  (function() {
+    let remaining = {{ remaining }};
+    const cdEl = document.getElementById('countdown');
+    const boxEl = document.getElementById('timer-box');
+    if (!cdEl) return;
+    function tick() {
+      remaining--;
+      if (remaining <= 0) {
+        cdEl.textContent = '만료됨';
+        cdEl.style.color = 'var(--danger)';
+        setTimeout(() => location.reload(), 2000);
+        return;
+      }
+      const h = Math.floor(remaining / 3600);
+      const m = Math.floor((remaining % 3600) / 60);
+      const s = remaining % 60;
+      let text;
+      if (h > 0) text = h + '시간 ' + m + '분 ' + s + '초';
+      else if (m > 0) text = m + '분 ' + s + '초';
+      else text = s + '초';
+      cdEl.textContent = text;
+      if (remaining < 300) {
+        cdEl.style.color = 'var(--danger)';
+        boxEl.style.background = '#fee2e2';
+      }
+    }
+    tick();
+    setInterval(tick, 1000);
+  })();
+  </script>
+  {% endif %}
+</body>
+</html>

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Study Cafe - 홈{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>📊 스터디 카페 현황</h2>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-value">{{ total }}</div>
+      <div class="stat-label">전체 좌석</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" style="color: var(--danger)">{{ occupied }}</div>
+      <div class="stat-label">사용 중</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" style="color: var(--success)">{{ available }}</div>
+      <div class="stat-label">이용 가능</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" style="color: var(--warning)">{{ occupied }}/{{ total }}</div>
+      <div class="stat-label">사용률</div>
+    </div>
+  </div>
+  {% if session.get('user_id') %}
+    <p style="text-align:center; color: var(--text-light);">
+      안녕하세요, <strong>{{ session.username }}</strong>님! 🎉
+    </p>
+  {% else %}
+    <div style="text-align:center;">
+      <p style="color: var(--text-light); margin-bottom: 1rem;">스터디 카페를 이용하시려면 로그인해주세요.</p>
+      <a href="{{ url_for('login') }}" class="btn btn-primary">로그인</a>
+      <a href="{{ url_for('register') }}" class="btn btn-outline">회원가입</a>
+    </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>🪑 좌석 현황</h2>
+  <div class="seat-grid">
+    {% for seat in seats %}
+    <div class="seat {{ 'occupied' if seat.is_occupied else 'available' }}">
+      <div class="seat-number">{{ seat.seat_number }}</div>
+      <div class="seat-zone">{{ seat.zone }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% if session.get('user_id') %}
+  <div style="margin-top:1rem; text-align:center;">
+    <a href="{{ url_for('seat_map') }}" class="btn btn-primary btn-sm">좌석 예약하기 →</a>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
