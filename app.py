@@ -12,6 +12,7 @@ import uuid
 import sqlite3
 import io
 import base64
+import logging
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import (
@@ -20,6 +21,7 @@ from flask import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 import qrcode
+import requests
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "study-cafe-secret-key-2026")
@@ -46,6 +48,122 @@ def close_db(exc):
     db = g.pop("db", None)
     if db is not None:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# WiFi 스마트 릴레이 제어 (Shelly / Sonoff)
+# ---------------------------------------------------------------------------
+
+logger = logging.getLogger("relay")
+logger.setLevel(logging.INFO)
+
+RELAY_TIMEOUT = 5  # HTTP 요청 타임아웃 (초)
+
+
+def get_relay_config(db=None):
+    """릴레이 설정을 DB에서 조회. db가 없으면 새 연결."""
+    own_conn = db is None
+    if own_conn:
+        db = sqlite3.connect(DB_PATH)
+        db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM relay_config WHERE id=1").fetchone()
+    if own_conn:
+        db.close()
+    return row
+
+
+def trigger_relay(action="checkin"):
+    """
+    WiFi 스마트 릴레이를 제어하여 도어락을 열었다가 닫는다.
+    Shelly: GET /relay/{channel}?turn=on  → wait → turn=off
+    Sonoff: GET /relay/0?turn=on (web UI firmware, Tasmota) → wait → turn=off
+
+    action: "checkin" | "checkout" | "test" (로깅 구분용)
+    반환: (success: bool, message: str)
+    """
+    cfg = get_relay_config()
+    if not cfg or not cfg["enabled"]:
+        return False, "릴레이 비활성화됨"
+
+    ip = cfg["ip_address"].strip()
+    if not ip:
+        return False, "릴레이 IP 주소가 설정되지 않음"
+
+    port = cfg["port"] or 80
+    device_type = cfg["device_type"] or "shelly"
+    channel = cfg["relay_channel"] or 0
+    duration_ms = cfg["open_duration_ms"] or 3000
+    username = cfg["username"] or ""
+    password = cfg["password"] or ""
+
+    base_url = f"http://{ip}:{port}"
+    auth = (username, password) if username else None
+    duration_sec = max(0.5, duration_ms / 1000.0)
+
+    try:
+        if device_type == "shelly":
+            # Shelly 1 / Shelly Plus 1
+            # Gen1: /relay/0?turn=on
+            # Gen2: /rpc/Switch.Set?id=0&on=true
+            # Gen1 시도 → 실패 시 Gen2 시도
+            on_url = f"{base_url}/relay/{channel}?turn=on"
+            off_url = f"{base_url}/relay/{channel}?turn=off"
+
+            # Gen1 시도
+            resp = requests.get(on_url, auth=auth, timeout=RELAY_TIMEOUT)
+            if resp.status_code == 404:
+                # Gen2 (Plus) 시도
+                on_url = f"{base_url}/rpc/Switch.Set?id={channel}&on=true"
+                off_url = f"{base_url}/rpc/Switch.Set?id={channel}&on=false"
+                resp = requests.get(on_url, auth=auth, timeout=RELAY_TIMEOUT)
+
+            if resp.status_code != 200:
+                return False, f"릴레이 ON 실패 (HTTP {resp.status_code})"
+
+        elif device_type == "sonoff":
+            # Sonoff Tasmota 펌웨어
+            on_url = f"{base_url}/cm?cmnd=Power{channel+1}%20On"
+            off_url = f"{base_url}/cm?cmnd=Power{channel+1}%20Off"
+            resp = requests.get(on_url, auth=auth, timeout=RELAY_TIMEOUT)
+            if resp.status_code != 200:
+                return False, f"릴레이 ON 실패 (HTTP {resp.status_code})"
+
+        elif device_type == "generic":
+            # 범용: 단순 ON/OFF 엔드포인트
+            on_url = f"{base_url}/relay/{channel}?turn=on"
+            off_url = f"{base_url}/relay/{channel}?turn=off"
+            resp = requests.get(on_url, auth=auth, timeout=RELAY_TIMEOUT)
+            if resp.status_code != 200:
+                return False, f"릴레이 ON 실패 (HTTP {resp.status_code})"
+
+        else:
+            return False, f"알 수 없는 릴레이 타입: {device_type}"
+
+        # 열림 유지 후 자동 닫힘
+        import time as _time
+        _time.sleep(duration_sec)
+        requests.get(off_url, auth=auth, timeout=RELAY_TIMEOUT)
+
+        # 결과 기록
+        now_str = fmt(datetime.now())
+        result_msg = f"[{action}] 문 개방 {duration_sec:.1f}초 → 완료 ({ip}:{port})"
+        db = sqlite3.connect(DB_PATH)
+        db.execute(
+            "UPDATE relay_config SET last_triggered_at=?, last_trigger_result=? WHERE id=1",
+            (now_str, result_msg),
+        )
+        db.commit()
+        db.close()
+
+        logger.info("Relay triggered: %s", result_msg)
+        return True, result_msg
+
+    except requests.exceptions.Timeout:
+        return False, f"릴레이 연결 시간 초과 ({ip}:{port})"
+    except requests.exceptions.ConnectionError:
+        return False, f"릴레이 연결 실패 — IP를 확인하세요 ({ip}:{port})"
+    except Exception as e:
+        return False, f"릴레이 오류: {e}"
 
 
 def init_db():
@@ -122,6 +240,22 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS relay_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            enabled INTEGER DEFAULT 0,
+            device_type TEXT DEFAULT 'shelly',
+            ip_address TEXT DEFAULT '',
+            port INTEGER DEFAULT 80,
+            relay_channel INTEGER DEFAULT 0,
+            username TEXT DEFAULT '',
+            password TEXT DEFAULT '',
+            open_duration_ms INTEGER DEFAULT 3000,
+            last_triggered_at TEXT,
+            last_trigger_result TEXT
+        )
+    """)
+    c.execute("INSERT OR IGNORE INTO relay_config (id, enabled) VALUES (1, 0)")
     c.execute("SELECT COUNT(*) FROM plans")
     if c.fetchone()[0] == 0:
         c.executemany(
@@ -940,6 +1074,7 @@ def api_door_checkin():
     db.commit()
 
     remaining = calc_remaining_seconds(fmt(session_expires))
+    relay_ok, relay_msg = trigger_relay("checkin")
     return jsonify({
         "success": True,
         "action": "checkin",
@@ -948,6 +1083,8 @@ def api_door_checkin():
         "username": res["username"],
         "remaining_seconds": remaining,
         "session_expires_at": fmt(session_expires),
+        "relay_triggered": relay_ok,
+        "relay_message": relay_msg,
         "message": f"입실 완료 — {res['seat_number']} 좌석 (이용시간 {SESSION_EXPIRE_MINUTES}분)"
     })
 
@@ -995,13 +1132,70 @@ def api_door_checkout():
     )
     db.commit()
 
+    relay_ok, relay_msg = trigger_relay("checkout")
     return jsonify({
         "success": True,
         "action": "checkout",
         "seat_number": res["seat_number"],
         "username": res["username"],
+        "relay_triggered": relay_ok,
+        "relay_message": relay_msg,
         "message": f"출실 완료 — {res['seat_number']} 좌석"
     })
+
+
+# ---------------------------------------------------------------------------
+# 관리자 — 릴레이 설정 API
+# ---------------------------------------------------------------------------
+
+@app.route("/api/relay/config", methods=["GET"])
+@login_required
+def api_relay_get_config():
+    if not session.get("is_admin"):
+        return jsonify({"error": "관리자 권한 필요"}), 403
+    db = get_db()
+    row = db.execute("SELECT * FROM relay_config WHERE id=1").fetchone()
+    if not row:
+        return jsonify({"enabled": 0, "device_type": "shelly", "ip_address": "", "port": 80,
+                         "relay_channel": 0, "username": "", "password": "",
+                         "open_duration_ms": 3000, "last_triggered_at": None,
+                         "last_trigger_result": None})
+    return jsonify({k: row[k] for k in row.keys()})
+
+
+@app.route("/api/relay/config", methods=["POST"])
+@login_required
+def api_relay_set_config():
+    if not session.get("is_admin"):
+        return jsonify({"error": "관리자 권한 필요"}), 403
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    db.execute("""
+        UPDATE relay_config SET
+            enabled=?, device_type=?, ip_address=?, port=?,
+            relay_channel=?, username=?, password=?, open_duration_ms=?
+        WHERE id=1
+    """, (
+        1 if data.get("enabled") else 0,
+        data.get("device_type", "shelly"),
+        data.get("ip_address", "").strip(),
+        int(data.get("port", 80)),
+        int(data.get("relay_channel", 0)),
+        data.get("username", "").strip(),
+        data.get("password", "").strip(),
+        int(data.get("open_duration_ms", 3000)),
+    ))
+    db.commit()
+    return jsonify({"success": True, "message": "릴레이 설정이 저장되었습니다."})
+
+
+@app.route("/api/relay/test", methods=["POST"])
+@login_required
+def api_relay_test():
+    if not session.get("is_admin"):
+        return jsonify({"error": "관리자 권한 필요"}), 403
+    ok, msg = trigger_relay("test")
+    return jsonify({"success": ok, "message": msg})
 
 
 # ---------------------------------------------------------------------------

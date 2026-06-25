@@ -164,4 +164,166 @@
   <p style="color: var(--text-light);">예약 내역이 없습니다.</p>
   {% endif %}
 </div>
+
+<!-- 릴레이 설정 카드 -->
+<div class="card" id="relay-card">
+  <h2>🔌 도어 릴레이 설정</h2>
+  <p style="color: var(--text-light); font-size: 0.85rem; margin-bottom: 1rem;">
+    WiFi 스마트 릴레이(Shelly / Sonoff)를 연결하여 QR 입실/출실 시 자동으로 문을 엽니다.
+  </p>
+  <div style="display: grid; gap: 0.8rem; max-width: 500px;">
+    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+      <input type="checkbox" id="relay-enabled" style="width: 18px; height: 18px;">
+      <strong>릴레이 활성화</strong>
+    </label>
+
+    <div>
+      <label style="font-size: 0.85rem; color: var(--text-light);">기기 타입</label>
+      <select id="relay-type" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; margin-top: 4px;">
+        <option value="shelly">Shelly 1 / Shelly Plus 1</option>
+        <option value="sonoff">Sonoff (Tasmota 펌웨어)</option>
+        <option value="generic">범용 HTTP 릴레이</option>
+      </select>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 0.5rem;">
+      <div>
+        <label style="font-size: 0.85rem; color: var(--text-light);">IP 주소</label>
+        <input type="text" id="relay-ip" placeholder="192.168.1.100" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; margin-top: 4px;">
+      </div>
+      <div>
+        <label style="font-size: 0.85rem; color: var(--text-light);">포트</label>
+        <input type="number" id="relay-port" value="80" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; margin-top: 4px;">
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+      <div>
+        <label style="font-size: 0.85rem; color: var(--text-light);">릴레이 채널</label>
+        <input type="number" id="relay-channel" value="0" min="0" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; margin-top: 4px;">
+      </div>
+      <div>
+        <label style="font-size: 0.85rem; color: var(--text-light);">문 열림 시간 (ms)</label>
+        <input type="number" id="relay-duration" value="3000" min="500" step="500" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; margin-top: 4px;">
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+      <div>
+        <label style="font-size: 0.85rem; color: var(--text-light);">인증 아이디 (선택)</label>
+        <input type="text" id="relay-user" placeholder="(없음)" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; margin-top: 4px;">
+      </div>
+      <div>
+        <label style="font-size: 0.85rem; color: var(--text-light);">인증 비밀번호 (선택)</label>
+        <input type="password" id="relay-pass" placeholder="(없음)" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; margin-top: 4px;">
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+      <button onclick="saveRelayConfig()" style="padding: 10px 20px; background: var(--primary); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">💾 저장</button>
+      <button onclick="testRelay()" id="btn-relay-test" style="padding: 10px 20px; background: #f59e0b; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">🧪 테스트</button>
+    </div>
+
+    <div id="relay-result" style="font-size: 0.85rem; padding: 0.6rem; border-radius: 6px; display: none;"></div>
+
+    <div id="relay-last-info" style="font-size: 0.8rem; color: var(--text-light); margin-top: 0.3rem;"></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  // 관리자인지 확인
+  const isAdmin = {% if session.get('is_admin') %}true{% else %}false{% endif %};
+  if (!isAdmin) return;
+
+  function fetchConfig() {
+    fetch('/api/relay/config')
+      .then(r => r.json())
+      .then(cfg => {
+        document.getElementById('relay-enabled').checked = !!cfg.enabled;
+        document.getElementById('relay-type').value = cfg.device_type || 'shelly';
+        document.getElementById('relay-ip').value = cfg.ip_address || '';
+        document.getElementById('relay-port').value = cfg.port || 80;
+        document.getElementById('relay-channel').value = cfg.relay_channel || 0;
+        document.getElementById('relay-duration').value = cfg.open_duration_ms || 3000;
+        document.getElementById('relay-user').value = cfg.username || '';
+        document.getElementById('relay-pass').value = cfg.password || '';
+        if (cfg.last_triggered_at) {
+          document.getElementById('relay-last-info').innerHTML =
+            '마지막 트리거: ' + cfg.last_triggered_at + '<br>' +
+            '결과: ' + (cfg.last_trigger_result || '-');
+        }
+      })
+      .catch(err => console.error('Relay config fetch error:', err));
+  }
+  fetchConfig();
+
+  window.saveRelayConfig = function() {
+    const data = {
+      enabled: document.getElementById('relay-enabled').checked,
+      device_type: document.getElementById('relay-type').value,
+      ip_address: document.getElementById('relay-ip').value,
+      port: parseInt(document.getElementById('relay-port').value) || 80,
+      relay_channel: parseInt(document.getElementById('relay-channel').value) || 0,
+      open_duration_ms: parseInt(document.getElementById('relay-duration').value) || 3000,
+      username: document.getElementById('relay-user').value,
+      password: document.getElementById('relay-pass').value,
+    };
+    fetch('/api/relay/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    .then(r => r.json())
+    .then(res => {
+      const el = document.getElementById('relay-result');
+      el.style.display = 'block';
+      if (res.success) {
+        el.style.background = '#d1fae5';
+        el.style.color = '#065f46';
+        el.textContent = '✅ ' + res.message;
+      } else {
+        el.style.background = '#fee2e2';
+        el.style.color = '#991b1b';
+        el.textContent = '❌ ' + (res.error || '저장 실패');
+      }
+      setTimeout(() => { el.style.display = 'none'; }, 3000);
+    });
+  };
+
+  window.testRelay = function() {
+    const btn = document.getElementById('btn-relay-test');
+    btn.disabled = true;
+    btn.textContent = '⏳ 테스트 중...';
+    const el = document.getElementById('relay-result');
+    el.style.display = 'block';
+    el.style.background = '#fef3c7';
+    el.style.color = '#92400e';
+    el.textContent = '릴레이에 신호를 보내는 중... (문이 열립니다)';
+
+    fetch('/api/relay/test', { method: 'POST' })
+      .then(r => r.json())
+      .then(res => {
+        if (res.success) {
+          el.style.background = '#d1fae5';
+          el.style.color = '#065f46';
+          el.textContent = '✅ ' + res.message;
+        } else {
+          el.style.background = '#fee2e2';
+          el.style.color = '#991b1b';
+          el.textContent = '❌ ' + res.message;
+        }
+      })
+      .catch(err => {
+        el.style.background = '#fee2e2';
+        el.style.color = '#991b1b';
+        el.textContent = '❌ 서버 연결 실패';
+      })
+      .finally(() => {
+        btn.disabled = false;
+        btn.textContent = '🧪 테스트';
+      });
+  };
+})();
+</script>
 {% endblock %}
