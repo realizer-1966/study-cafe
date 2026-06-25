@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>QR 스캐너 - Study Cafe</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+  <!-- jsQR: 브라우저에서 QR 코드 인식 (순수 JS, 외부 API 불필요) -->
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <style>
+    /* 스캐너 전용 스타일 */
+    body { background: #0f172a; }
+    .scanner-wrap {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 1rem;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .scanner-header {
+      width: 100%;
+      text-align: center;
+      color: white;
+      margin-bottom: 1rem;
+      margin-top: 0.5rem;
+    }
+    .scanner-header h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .scanner-header .subtitle {
+      font-size: 0.85rem;
+      color: #94a3b8;
+      margin-top: 4px;
+    }
+
+    /* 카메라 영역 */
+    .camera-box {
+      position: relative;
+      width: 100%;
+      max-width: 380px;
+      aspect-ratio: 1;
+      border-radius: 16px;
+      overflow: hidden;
+      background: #000;
+      box-shadow: 0 0 0 3px #334155, 0 8px 32px rgba(0,0,0,0.5);
+    }
+    #camera-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    #camera-canvas {
+      display: none;
+    }
+
+    /* 스캔 프레임 오버레이 */
+    .scan-overlay {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 70%;
+      height: 70%;
+      border: 3px solid rgba(255,255,255,0.4);
+      border-radius: 16px;
+      pointer-events: none;
+    }
+    .scan-overlay::before,
+    .scan-overlay::after {
+      content: '';
+      position: absolute;
+      width: 32px; height: 32px;
+      border: 4px solid #22d3ee;
+    }
+    .scan-overlay::before {
+      top: -4px; left: -4px;
+      border-right: none; border-bottom: none;
+      border-radius: 12px 0 0 0;
+    }
+    .scan-overlay::after {
+      bottom: -4px; right: -4px;
+      border-left: none; border-top: none;
+      border-radius: 0 0 12px 0;
+    }
+    .scan-line {
+      position: absolute;
+      left: 5%; width: 90%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #22d3ee, transparent);
+      animation: scanMove 2s ease-in-out infinite;
+      box-shadow: 0 0 12px #22d3ee;
+    }
+    @keyframes scanMove {
+      0%, 100% { top: 15%; }
+      50% { top: 85%; }
+    }
+
+    /* 상태 표시 */
+    .status-text {
+      color: #94a3b8;
+      font-size: 0.9rem;
+      text-align: center;
+      margin-top: 1rem;
+      min-height: 1.5em;
+    }
+    .status-text .scanning {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .status-text .scanning::after {
+      content: '';
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: #22d3ee;
+      animation: blink 1s infinite;
+    }
+    @keyframes blink { 50% { opacity: 0.3; } }
+
+    /* 결과 카드 */
+    .result-card {
+      width: 100%;
+      max-width: 380px;
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-top: 1rem;
+      display: none;
+      animation: slideUp 0.3s ease;
+    }
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .result-card.success {
+      background: linear-gradient(135deg, #16a34a, #22c55e);
+      color: white;
+      text-align: center;
+    }
+    .result-card.error {
+      background: linear-gradient(135deg, #dc2626, #ef4444);
+      color: white;
+      text-align: center;
+    }
+    .result-card .icon {
+      font-size: 3rem;
+      margin-bottom: 0.5rem;
+    }
+    .result-card .title {
+      font-size: 1.3rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+    .result-card .info {
+      background: rgba(255,255,255,0.15);
+      border-radius: 10px;
+      padding: 0.8rem;
+      margin: 0.8rem 0;
+      font-size: 0.95rem;
+    }
+    .result-card .info div { margin: 4px 0; }
+    .result-card .countdown {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-top: 8px;
+    }
+
+    /* 버튼 */
+    .scanner-btn {
+      width: 100%;
+      max-width: 380px;
+      padding: 14px;
+      border: none;
+      border-radius: 12px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 1rem;
+      transition: opacity 0.2s;
+    }
+    .scanner-btn:active { opacity: 0.8; }
+    .btn-start {
+      background: #22d3ee;
+      color: #0f172a;
+    }
+    .btn-stop {
+      background: #475569;
+      color: white;
+    }
+    .btn-again {
+      background: white;
+      color: #0f172a;
+    }
+
+    /* 에러 메시지 (카메라 접근 불가 등) */
+    .cam-error {
+      width: 100%;
+      max-width: 380px;
+      background: rgba(220,38,38,0.15);
+      border: 1px solid rgba(220,38,38,0.3);
+      border-radius: 12px;
+      padding: 1rem;
+      color: #fca5a5;
+      text-align: center;
+      display: none;
+      margin-top: 1rem;
+      font-size: 0.9rem;
+    }
+
+    /* 최근 스캔 기록 */
+    .scan-log {
+      width: 100%;
+      max-width: 380px;
+      margin-top: 1.5rem;
+    }
+    .scan-log h3 {
+      color: #94a3b8;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.5rem;
+    }
+    .log-item {
+      background: rgba(255,255,255,0.05);
+      border-radius: 8px;
+      padding: 0.6rem 0.8rem;
+      margin-bottom: 6px;
+      font-size: 0.82rem;
+      color: #cbd5e1;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .log-item .log-time { color: #64748b; font-size: 0.75rem; }
+    .log-item.ok { border-left: 3px solid #22c55e; }
+    .log-item.fail { border-left: 3px solid #ef4444; }
+
+    /* 서버 주소 표시 */
+    .server-info {
+      margin-top: 1rem;
+      font-size: 0.75rem;
+      color: #475569;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="scanner-wrap">
+    <div class="scanner-header">
+      <h1>📷 QR 스캐너</h1>
+      <div class="subtitle">출입문 QR 코드를 카메라에 비추세요</div>
+    </div>
+
+    <!-- 카메라 영역 -->
+    <div class="camera-box" id="camera-box">
+      <video id="camera-video" playsinline muted autoplay></video>
+      <canvas id="camera-canvas"></canvas>
+      <div class="scan-overlay" id="scan-overlay">
+        <div class="scan-line"></div>
+      </div>
+    </div>
+
+    <!-- 카메라 에러 -->
+    <div class="cam-error" id="cam-error"></div>
+
+    <!-- 상태 표시 -->
+    <div class="status-text" id="status-text">
+      시작 버튼을 눌러 카메라를 켜세요
+    </div>
+
+    <!-- 버튼 -->
+    <button class="scanner-btn btn-start" id="btn-start" onclick="startCamera()">
+      🎥 카메라 시작
+    </button>
+    <button class="scanner-btn btn-stop" id="btn-stop" onclick="stopCamera()" style="display:none;">
+      ⏹️ 카메라 중지
+    </button>
+
+    <!-- 결과 카드 -->
+    <div class="result-card" id="result-card">
+      <div class="icon" id="result-icon"></div>
+      <div class="title" id="result-title"></div>
+      <div class="info" id="result-info"></div>
+      <div class="countdown" id="result-countdown"></div>
+    </div>
+
+    <!-- 다시 스캔 버튼 (결과 표시 후) -->
+    <button class="scanner-btn btn-again" id="btn-again" onclick="resetResult()" style="display:none;">
+      🔁 다시 스캔
+    </button>
+
+    <!-- 최근 스캔 기록 -->
+    <div class="scan-log" id="scan-log-section" style="display:none;">
+      <h3>📋 최근 스캔 기록</h3>
+      <div id="scan-log-list"></div>
+    </div>
+
+    <!-- 서버 주소 -->
+    <div class="server-info">
+      서버: <span id="server-url"></span>
+    </div>
+  </div>
+
+  <script>
+  (function() {
+    'use strict';
+
+    // --- DOM 요소 ---
+    const video = document.getElementById('camera-video');
+    const canvas = document.getElementById('camera-canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const statusText = document.getElementById('status-text');
+    const camError = document.getElementById('cam-error');
+    const btnStart = document.getElementById('btn-start');
+    const btnStop = document.getElementById('btn-stop');
+    const btnAgain = document.getElementById('btn-again');
+    const resultCard = document.getElementById('result-card');
+    const resultIcon = document.getElementById('result-icon');
+    const resultTitle = document.getElementById('result-title');
+    const resultInfo = document.getElementById('result-info');
+    const resultCountdown = document.getElementById('result-countdown');
+    const scanLogSection = document.getElementById('scan-log-section');
+    const scanLogList = document.getElementById('scan-log-list');
+    const serverUrlEl = document.getElementById('server-url');
+
+    // --- 상태 ---
+    let stream = null;
+    let scanning = false;
+    let rafId = null;
+    let lastToken = null;          // 직전에 스캔한 토큰
+    let lastScanTime = 0;          // 중복 스캔 방지 (쿨다운 3초)
+    let countdownTimer = null;     // 결과 카운트다운 인터벌
+    let scanLogs = [];             // 스캔 기록 (최대 5개)
+
+    // 서버 주소 표시 (같은 폰이면 상대경로, 다른 기기면 IP 필요)
+    serverUrlEl.textContent = location.origin;
+
+    // --- 카메라 시작 ---
+    window.startCamera = async function() {
+      camError.style.display = 'none';
+      try {
+        // 후면 카메라 우선
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false
+        });
+        video.srcObject = stream;
+        await video.play();
+
+        btnStart.style.display = 'none';
+        btnStop.style.display = 'block';
+        statusText.innerHTML = '<span class="scanning">QR 코드를 스캔 중...</span>';
+
+        scanning = true;
+        scanLoop();
+      } catch (err) {
+        console.error('Camera error:', err);
+        let msg = '카메라에 접근할 수 없습니다.';
+        if (err.name === 'NotAllowedError') {
+          msg = '카메라 권한이 거부되었습니다. 브라우저 설정에서 카메라 접근을 허용해주세요.';
+        } else if (err.name === 'NotFoundError') {
+          msg = '카메라를 찾을 수 없습니다. 카메라가 있는 기기에서 사용하세요.';
+        } else if (err.name === 'NotReadableError') {
+          msg = '카메라가 다른 앱에서 사용 중입니다. 다른 앱을 닫아주세요.';
+        }
+        camError.textContent = '⚠️ ' + msg;
+        camError.style.display = 'block';
+      }
+    };
+
+    // --- 카메라 중지 ---
+    window.stopCamera = function() {
+      scanning = false;
+      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+      }
+      video.srcObject = null;
+      btnStart.style.display = 'block';
+      btnStop.style.display = 'none';
+      statusText.textContent = '카메라가 중지되었습니다.';
+    };
+
+    // --- QR 스캔 루프 ---
+    function scanLoop() {
+      if (!scanning || !stream) return;
+
+      // 비디오가 준비되었으면 프레임 캡처
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        const w = video.videoWidth;
+        const h = video.videoHeight;
+        if (w > 0 && h > 0) {
+          canvas.width = w;
+          canvas.height = h;
+          ctx.drawImage(video, 0, 0, w, h);
+
+          // jsQR로 QR 코드 인식
+          try {
+            const imageData = ctx.getImageData(0, 0, w, h);
+            const qr = jsQR(imageData.data, imageData.width, imageData.height, {
+              inversionAttempts: 'dontInvert'
+            });
+
+            if (qr && qr.data) {
+              const now = Date.now();
+              // 쿨다운: 같은 토큰 3초 이내 재스캔 무시
+              if (qr.data === lastToken && (now - lastScanTime) < 3000) {
+                // 무시
+              } else {
+                lastToken = qr.data;
+                lastScanTime = now;
+                handleQRToken(qr.data);
+                return; // 스캔 성공 시 루프 중단
+              }
+            }
+          } catch (e) {
+            // getImageData 실패 (CORS 등) - 무시하고 계속
+          }
+        }
+      }
+
+      rafId = requestAnimationFrame(scanLoop);
+    }
+
+    // --- QR 토큰 처리: verify → checkin/checkout ---
+    async function handleQRToken(token) {
+      scanning = false;
+      statusText.textContent = '서버에서 확인 중...';
+
+      try {
+        // 1단계: verify (상태 확인)
+        const verifyResp = await fetch('/api/door/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: token })
+        });
+        const verifyData = await verifyResp.json();
+
+        if (!verifyData.success) {
+          showResult('error', '❌', verifyData.error || 'QR 코드가 유효하지 않습니다.', null);
+          addLog(token, false, verifyData.error || '유효하지 않음');
+          return;
+        }
+
+        // 2단계: checkin 또는 checkout 자동 처리
+        const endpoint = verifyData.action === 'checkin_ready' ? '/api/door/checkin' : '/api/door/checkout';
+        const actionResp = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: token })
+        });
+        const actionData = await actionResp.json();
+
+        if (actionData.success) {
+          const isCheckin = actionData.action === 'checkin';
+          const icon = isCheckin ? '✅' : '👋';
+          const title = isCheckin ? '입실 완료' : '출실 완료';
+          const infoHtml = `
+            <div>🪑 좌석: <strong>${actionData.seat_number}</strong> (${actionData.zone || ''})</div>
+            <div>👤 회원: <strong>${actionData.username}</strong></div>
+            <div>💬 ${actionData.message || ''}</div>
+          `;
+          const remaining = actionData.remaining_seconds || null;
+          showResult('success', icon, title, infoHtml, remaining, isCheckin);
+          addLog(token, true, `${isCheckin ? '입실' : '출실'} ${actionData.seat_number}`);
+        } else {
+          showResult('error', '❌', '처리 실패', `<div>${actionData.error || '알 수 없는 오류'}</div>`);
+          addLog(token, false, actionData.error || '처리 실패');
+        }
+      } catch (err) {
+        console.error('API error:', err);
+        showResult('error', '⚠️', '서버 연결 실패', '<div>서버에 연결할 수 없습니다.</div>');
+        addLog(token, false, '서버 연결 실패');
+      }
+    }
+
+    // --- 결과 표시 ---
+    function showResult(type, icon, title, infoHtml, remaining, isCheckin) {
+      resultCard.className = 'result-card ' + type;
+      resultCard.style.display = 'block';
+      resultIcon.textContent = icon;
+      resultTitle.textContent = title;
+      resultInfo.innerHTML = infoHtml || '';
+
+      // 카운트다운 (입실 시에만)
+      if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+      if (type === 'success' && remaining && isCheckin) {
+        let secs = remaining;
+        resultCountdown.style.display = 'block';
+        function updateCountdown() {
+          if (secs <= 0) {
+            resultCountdown.textContent = '시간 만료';
+            resultCountdown.style.color = '#fef3c7';
+            clearInterval(countdownTimer);
+            return;
+          }
+          const h = Math.floor(secs / 3600);
+          const m = Math.floor((secs % 3600) / 60);
+          const s = secs % 60;
+          let txt;
+          if (h > 0) txt = h + '시간 ' + m + '분 ' + s + '초';
+          else if (m > 0) txt = m + '분 ' + s + '초';
+          else txt = s + '초';
+          resultCountdown.textContent = '⏰ 남은 시간: ' + txt;
+          if (secs < 300) resultCountdown.style.color = '#fde68a';
+          secs--;
+        }
+        updateCountdown();
+        countdownTimer = setInterval(updateCountdown, 1000);
+      } else {
+        resultCountdown.style.display = 'none';
+      }
+
+      btnAgain.style.display = 'block';
+      statusText.textContent = '';
+    }
+
+    // --- 다시 스캔 ---
+    window.resetResult = function() {
+      resultCard.style.display = 'none';
+      btnAgain.style.display = 'none';
+      lastToken = null;
+      if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+      // 카메라가 켜져 있으면 다시 스캔 시작
+      if (stream) {
+        scanning = true;
+        statusText.innerHTML = '<span class="scanning">QR 코드를 스캔 중...</span>';
+        scanLoop();
+      } else {
+        statusText.textContent = '카메라를 시작하세요.';
+      }
+    };
+
+    // --- 스캔 기록 ---
+    function addLog(token, success, message) {
+      const now = new Date();
+      const timeStr = now.getHours().toString().padStart(2,'0') + ':' +
+                      now.getMinutes().toString().padStart(2,'0') + ':' +
+                      now.getSeconds().toString().padStart(2,'0');
+      scanLogs.unshift({ time: timeStr, success, message });
+      if (scanLogs.length > 5) scanLogs.pop();
+      renderLogs();
+    }
+
+    function renderLogs() {
+      if (scanLogs.length === 0) {
+        scanLogSection.style.display = 'none';
+        return;
+      }
+      scanLogSection.style.display = 'block';
+      scanLogList.innerHTML = scanLogs.map(log =>
+        `<div class="log-item ${log.success ? 'ok' : 'fail'}">
+          <span>${log.success ? '✅' : '❌'} ${log.message}</span>
+          <span class="log-time">${log.time}</span>
+        </div>`
+      ).join('');
+    }
+
+    // --- 정리 ---
+    window.addEventListener('beforeunload', () => {
+      if (countdownTimer) clearInterval(countdownTimer);
+      if (stream) stream.getTracks().forEach(t => t.stop());
+    });
+
+    // HTTPS 확인 (카메라 접근에 필요)
+    if (location.protocol !== 'https:' && location.hostname !== '127.0.0.1' && location.hostname !== 'localhost') {
+      camError.style.display = 'block';
+      camError.innerHTML = '⚠️ 카메라 접근을 위해서는 <strong>HTTPS</strong>가 필요합니다.<br>' +
+        '같은 폰에서는 http://127.0.0.1:5000/scanner 로 접속하세요.<br>' +
+        '다른 폰에서는 HTTPS 프록시 또는 자체 서명 인증서가 필요합니다.';
+    }
+  })();
+  </script>
+</body>
+</html>
