@@ -198,6 +198,39 @@
       color: #0f172a;
     }
 
+    /* 카메라 전환 버튼 (카메라 영역 내 우상단) */
+    .btn-switch-cam {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(15, 23, 42, 0.7);
+      color: white;
+      font-size: 1.3rem;
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      transition: background 0.2s;
+    }
+    .btn-switch-cam:active { background: rgba(15, 23, 42, 0.9); }
+    .camera-label {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(15, 23, 42, 0.7);
+      color: #94a3b8;
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 8px;
+      display: none;
+      z-index: 10;
+    }
+
     /* 에러 메시지 (카메라 접근 불가 등) */
     .cam-error {
       width: 100%;
@@ -259,6 +292,8 @@
 
     <!-- 카메라 영역 -->
     <div class="camera-box" id="camera-box">
+      <button class="btn-switch-cam" id="btn-switch-cam" onclick="switchCamera()" title="카메라 전환">🔄</button>
+      <div class="camera-label" id="camera-label">후면</div>
       <video id="camera-video" playsinline muted autoplay></video>
       <canvas id="camera-canvas"></canvas>
       <div class="scan-overlay" id="scan-overlay">
@@ -328,6 +363,8 @@
     const scanLogSection = document.getElementById('scan-log-section');
     const scanLogList = document.getElementById('scan-log-list');
     const serverUrlEl = document.getElementById('server-url');
+    const btnSwitchCam = document.getElementById('btn-switch-cam');
+    const cameraLabel = document.getElementById('camera-label');
 
     // --- 상태 ---
     let stream = null;
@@ -337,6 +374,7 @@
     let lastScanTime = 0;          // 중복 스캔 방지 (쿨다운 3초)
     let countdownTimer = null;     // 결과 카운트다운 인터벌
     let scanLogs = [];             // 스캔 기록 (최대 5개)
+    let currentFacingMode = 'environment';  // 'environment'(후면) | 'user'(전면)
 
     // 서버 주소 표시 (같은 폰이면 상대경로, 다른 기기면 IP 필요)
     serverUrlEl.textContent = location.origin;
@@ -345,9 +383,9 @@
     window.startCamera = async function() {
       camError.style.display = 'none';
       try {
-        // 후면 카메라 우선
+        // 현재 설정된 facingMode 사용 (기본: 후면)
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } },
+          video: { facingMode: { ideal: currentFacingMode } },
           audio: false
         });
         video.srcObject = stream;
@@ -355,6 +393,8 @@
 
         btnStart.style.display = 'none';
         btnStop.style.display = 'block';
+        btnSwitchCam.style.display = 'flex';
+        updateCameraLabel();
         statusText.innerHTML = '<span class="scanning">QR 코드를 스캔 중...</span>';
 
         scanning = true;
@@ -374,6 +414,44 @@
       }
     };
 
+    // --- 카메라 전환 (전면 ↔ 후면) ---
+    window.switchCamera = async function() {
+      if (!stream) return;
+      // facingMode 토글
+      currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+      // 기존 스트림 정지
+      scanning = false;
+      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+      // 새 스트림 시작
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: currentFacingMode } },
+          audio: false
+        });
+        video.srcObject = stream;
+        await video.play();
+        updateCameraLabel();
+        scanning = true;
+        statusText.innerHTML = '<span class="scanning">QR 코드를 스캔 중...</span>';
+        scanLoop();
+      } catch (err) {
+        console.error('Switch camera error:', err);
+        camError.textContent = '⚠️ 카메라 전환에 실패했습니다: ' + (err.message || err.name);
+        camError.style.display = 'block';
+        btnSwitchCam.style.display = 'none';
+        // 원래대로 복구
+        currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+      }
+    };
+
+    // --- 카메라 라벨 업데이트 ---
+    function updateCameraLabel() {
+      cameraLabel.style.display = 'block';
+      cameraLabel.textContent = currentFacingMode === 'environment' ? '📷 후면' : '🤳 전면';
+    }
+
     // --- 카메라 중지 ---
     window.stopCamera = function() {
       scanning = false;
@@ -385,6 +463,8 @@
       video.srcObject = null;
       btnStart.style.display = 'block';
       btnStop.style.display = 'none';
+      btnSwitchCam.style.display = 'none';
+      cameraLabel.style.display = 'none';
       statusText.textContent = '카메라가 중지되었습니다.';
     };
 
