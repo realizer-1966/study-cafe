@@ -2,113 +2,129 @@
 {% block title %}내 QR 코드 - Study Cafe{% endblock %}
 {% block content %}
 <div style="max-width: 480px; margin: 0 auto;">
-  <div class="card" style="text-align: center;">
-    <h2>📱 내 QR 코드</h2>
 
-    <div style="background: #f8fafc; border-radius: 12px; padding: 1.5rem; margin: 1rem 0;">
-      <div style="font-size: 0.9rem; color: var(--text-light); margin-bottom: 4px;">
-        예약 좌석
-      </div>
-      <div style="font-size: 1.8rem; font-weight: 700; color: var(--primary);">
-        {{ reservation.seat_number }}
-      </div>
-      <div style="font-size: 0.9rem; color: var(--text-light);">{{ reservation.zone }} zone</div>
+  {% if not cards %}
+    <div class="card" style="text-align: center;">
+      <h2>📱 내 QR 코드</h2>
+      <p style="color: var(--text-light); margin: 1.5rem 0;">활성 예약이 없습니다.</p>
+      <a href="{{ url_for('seat_map') }}" class="btn btn-primary">좌석 예약하러 가기</a>
+    </div>
+  {% else %}
+    <div class="card" style="text-align: center; margin-bottom: 1rem;">
+      <h2>📱 내 QR 코드 ({{ cards|length }}건)</h2>
     </div>
 
-    <!-- 남은 시간 카운트다운 -->
-    <div id="timer-box" style="background: {% if reservation.status == 'reserved' %}#dbeafe{% else %}#fef3c7{% endif %}; border-radius: 12px; padding: 1rem; margin: 1rem 0;">
-      <div style="font-size: 0.85rem; color: var(--text-light); margin-bottom: 4px;" id="timer-label">
-        {{ remaining_label }}
-      </div>
-      <div id="countdown" style="font-size: 1.6rem; font-weight: 700; color: {% if reservation.status == 'reserved' %}var(--primary){% else %}#92400e{% endif %};">
-        {{ format_remaining(remaining) }}
-      </div>
-      <div id="expires-at" style="font-size: 0.8rem; color: var(--text-light); margin-top: 4px;">
-        {% if reservation.status == 'reserved' %}
-          만료 시간: {{ reservation.qr_expires_at }}
-        {% else %}
-          종료 시간: {{ reservation.session_expires_at }}
-        {% endif %}
-      </div>
-    </div>
-
-    <div style="margin: 1.5rem 0;">
-      <img src="{{ qr_img }}" alt="QR Code"
-           style="width: 260px; height: 260px; border-radius: 12px; border: 2px solid var(--border);">
-    </div>
-
-    {% if reservation.status == 'reserved' %}
-      <div class="flash info" style="margin-bottom: 1rem;">
-        📥 예약 완료! 입구의 QR 스캐너로 이 QR 코드를 스캔하여 입실하세요.
-      </div>
-      <p style="color: var(--text-light); font-size: 0.85rem; margin-bottom: 1rem;">
-        예약 시간: {{ reservation.start_time }}
-      </p>
-      <div style="display: flex; gap: 0.5rem; justify-content: center;">
-        <a href="{{ checkin_url }}" class="btn btn-primary btn-sm">스캔 페이지 열기</a>
-        <form method="POST" action="{{ url_for('cancel_reservation', res_id=reservation.id) }}"
-              onsubmit="return confirm('예약을 취소하시겠습니까?')">
-          <button type="submit" class="btn btn-danger btn-sm">예약 취소</button>
-        </form>
-      </div>
-    {% elif reservation.status == 'checked_in' %}
-      <div class="flash success" style="margin-bottom: 1rem;">
-        ✅ 입실 중! 퇴실 시 이 QR 코드를 다시 스캔하세요.
-      </div>
-      <p style="color: var(--text-light); font-size: 0.85rem; margin-bottom: 0.5rem;">
-        입실 시간: {{ reservation.check_in_time }}
-      </p>
-      <!-- 연장 버튼 -->
-      <div style="background: #ecfdf5; border-radius: 10px; padding: 1rem; margin: 0.75rem 0;">
-        <div style="font-size: 0.85rem; color: #065f46; margin-bottom: 0.5rem;">
-          ⏳ 연장 가능 횟수: <strong>{{ ext_remaining }}회</strong> / {{ EXTEND_MINUTES }}분씩 연장
+    {% for card in cards %}
+    {% set res = card.reservation %}
+    <div class="card" style="text-align: center; margin-bottom: 1.5rem; {% if not loop.last %}border-bottom: 2px solid var(--border);{% endif %}">
+      <div style="background: #f8fafc; border-radius: 12px; padding: 1.5rem; margin: 1rem 0;">
+        <div style="font-size: 0.9rem; color: var(--text-light); margin-bottom: 4px;">
+          예약 좌석
         </div>
-        {% if can_extend %}
-          <form method="POST" action="{{ url_for('extend_session', res_id=reservation.id) }}"
-                onsubmit="return confirm('{{ EXTEND_MINUTES }}분 연장하시겠습니까? 남은 연장 횟수: {{ ext_remaining }}회')">
-            <button type="submit" class="btn btn-primary btn-sm" style="width: 100%;">
-              ➕ 시간 연장하기 ({{ EXTEND_MINUTES }}분)
-            </button>
-          </form>
-        {% else %}
-          <div style="font-size: 0.85rem; color: var(--danger); text-align: center; padding: 0.5rem;">
-            연장 횟수를 모두 사용했습니다.
-          </div>
-        {% endif %}
+        <div style="font-size: 1.8rem; font-weight: 700; color: var(--primary);">
+          {{ res.seat_number }}
+        </div>
+        <div style="font-size: 0.9rem; color: var(--text-light);">{{ res.zone }} zone</div>
       </div>
-      <div style="display: flex; gap: 0.5rem; justify-content: center;">
-        <a href="{{ checkin_url }}" class="btn btn-primary btn-sm">스캔 페이지 열기</a>
-      </div>
-    {% endif %}
 
-    <div style="margin-top: 1.5rem; padding: 12px; background: #fef3c7; border-radius: 8px; font-size: 0.85rem; color: #92400e; text-align: left;">
+      <!-- 남은 시간 카운트다운 -->
+      <div id="timer-box-{{ res.id }}" style="background: {% if res.status == 'reserved' %}#dbeafe{% else %}#fef3c7{% endif %}; border-radius: 12px; padding: 1rem; margin: 1rem 0;">
+        <div style="font-size: 0.85rem; color: var(--text-light); margin-bottom: 4px;" id="timer-label-{{ res.id }}">
+          {{ card.remaining_label }}
+        </div>
+        <div id="countdown-{{ res.id }}" style="font-size: 1.6rem; font-weight: 700; color: {% if res.status == 'reserved' %}var(--primary){% else %}#92400e{% endif %};">
+          {{ format_remaining(card.remaining) }}
+        </div>
+        <div id="expires-at-{{ res.id }}" style="font-size: 0.8rem; color: var(--text-light); margin-top: 4px;">
+          {% if res.status == 'reserved' %}
+            만료 시간: {{ res.qr_expires_at }}
+          {% else %}
+            종료 시간: {{ res.session_expires_at }}
+          {% endif %}
+        </div>
+      </div>
+
+      <div style="margin: 1.5rem 0;">
+        <img src="{{ card.qr_img }}" alt="QR Code"
+             style="width: 260px; height: 260px; border-radius: 12px; border: 2px solid var(--border);">
+      </div>
+
+      {% if res.status == 'reserved' %}
+        <div class="flash info" style="margin-bottom: 1rem;">
+          📥 예약 완료! 입구의 QR 스캐너로 이 QR 코드를 스캔하여 입실하세요.
+        </div>
+        <p style="color: var(--text-light); font-size: 0.85rem; margin-bottom: 1rem;">
+          예약 시간: {{ res.start_time }}
+        </p>
+        <div style="display: flex; gap: 0.5rem; justify-content: center;">
+          <a href="{{ card.checkin_url }}" class="btn btn-primary btn-sm">스캔 페이지 열기</a>
+          <form method="POST" action="{{ url_for('cancel_reservation', res_id=res.id) }}"
+                onsubmit="return confirm('{{ res.seat_number }} 좌석 예약을 취소하시겠습니까?')">
+            <button type="submit" class="btn btn-danger btn-sm">예약 취소</button>
+          </form>
+        </div>
+      {% elif res.status == 'checked_in' %}
+        <div class="flash success" style="margin-bottom: 1rem;">
+          ✅ 입실 중! 퇴실 시 이 QR 코드를 다시 스캔하세요.
+        </div>
+        <p style="color: var(--text-light); font-size: 0.85rem; margin-bottom: 0.5rem;">
+          입실 시간: {{ res.check_in_time }}
+        </p>
+        <!-- 연장 버튼 -->
+        <div style="background: #ecfdf5; border-radius: 10px; padding: 1rem; margin: 0.75rem 0;">
+          <div style="font-size: 0.85rem; color: #065f46; margin-bottom: 0.5rem;">
+            ⏳ 연장 가능 횟수: <strong>{{ card.ext_remaining }}회</strong> / {{ EXTEND_MINUTES }}분씩 연장
+          </div>
+          {% if card.can_extend %}
+            <form method="POST" action="{{ url_for('extend_session', res_id=res.id) }}"
+                  onsubmit="return confirm('{{ EXTEND_MINUTES }}분 연장하시겠습니까? 남은 연장 횟수: {{ card.ext_remaining }}회')">
+              <button type="submit" class="btn btn-primary btn-sm" style="width: 100%;">
+                ➕ 시간 연장하기 ({{ EXTEND_MINUTES }}분)
+              </button>
+            </form>
+          {% else %}
+            <div style="font-size: 0.85rem; color: var(--danger); text-align: center; padding: 0.5rem;">
+              연장 횟수를 모두 사용했습니다.
+            </div>
+          {% endif %}
+        </div>
+        <div style="display: flex; gap: 0.5rem; justify-content: center;">
+          <a href="{{ card.checkin_url }}" class="btn btn-primary btn-sm">스캔 페이지 열기</a>
+        </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    <div class="card" style="padding: 12px; background: #fef3c7; border-radius: 8px; font-size: 0.85rem; color: #92400e; text-align: left;">
       💡 <strong>이용 방법</strong><br>
       1. 좌석 예약 후 QR 코드가 발급됩니다<br>
       2. 예약 후 2시간 내에 QR 스캔 → 입실<br>
       3. 입실 후 4시간 이용 가능<br>
       4. 시간 초과 시 자동 퇴실 처리됩니다<br>
-      5. 퇴실 시 QR 코드 다시 스캔 → 출실
+      5. 퇴실 시 QR 코드 다시 스캔 → 출실<br>
+      6. 여러 좌석을 동시에 예약할 수 있습니다
     </div>
-  </div>
+  {% endif %}
 </div>
 
+{% if cards %}
 <script>
-// 실시간 카운트다운
+{% for card in cards %}
+{% set res = card.reservation %}
+{% if card.remaining is not none and card.remaining > 0 %}
 (function() {
-  let remaining = {{ remaining if remaining is not none else 'null' }};
-  const labelEl = document.getElementById('timer-label');
-  const cdEl = document.getElementById('countdown');
-  const boxEl = document.getElementById('timer-box');
-
+  let remaining = {{ card.remaining }};
+  const cdEl = document.getElementById('countdown-{{ res.id }}');
+  const boxEl = document.getElementById('timer-box-{{ res.id }}');
+  if (!cdEl) return;
   function tick() {
-    if (remaining === null || remaining <= 0) {
+    remaining--;
+    if (remaining <= 0) {
       cdEl.textContent = '만료됨';
       cdEl.style.color = 'var(--danger)';
-      // 만료 시 페이지 새로고침
       setTimeout(() => location.reload(), 2000);
       return;
     }
-    remaining--;
     const h = Math.floor(remaining / 3600);
     const m = Math.floor((remaining % 3600) / 60);
     const s = remaining % 60;
@@ -117,16 +133,16 @@
     else if (m > 0) text = m + '분 ' + s + '초';
     else text = s + '초';
     cdEl.textContent = text;
-    // 5분 이하면 빨간색
     if (remaining < 300) {
       cdEl.style.color = 'var(--danger)';
       boxEl.style.background = '#fee2e2';
     }
   }
-  if (remaining !== null) {
-    tick();
-    setInterval(tick, 1000);
-  }
+  tick();
+  setInterval(tick, 1000);
 })();
+{% endif %}
+{% endfor %}
 </script>
+{% endif %}
 {% endblock %}

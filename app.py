@@ -487,22 +487,23 @@ def seat_map():
     zones = {}
     for s in seats:
         zones.setdefault(s["zone"], []).append(s)
-    my_res = db.execute(
+    my_reservations = db.execute(
         """SELECT r.*, s.seat_number, s.zone FROM reservations r
            JOIN seats s ON r.seat_id=s.id
            WHERE r.user_id=? AND r.status IN ('reserved','checked_in')
-           ORDER BY r.created_at DESC LIMIT 1""",
+           ORDER BY r.created_at DESC""",
         (session["user_id"],),
-    ).fetchone()
-    # 남은 시간 계산
-    remaining = None
-    if my_res:
-        if my_res["status"] == "reserved":
-            remaining = calc_remaining_seconds(my_res["qr_expires_at"])
-        elif my_res["status"] == "checked_in":
-            remaining = calc_remaining_seconds(my_res["session_expires_at"])
-    return render_template("seats.html", zones=zones, my_res=my_res,
-                           remaining=remaining, format_remaining=format_remaining)
+    ).fetchall()
+    # 각 예약별 남은 시간 계산
+    my_res_info = []
+    for r in my_reservations:
+        if r["status"] == "reserved":
+            rem = calc_remaining_seconds(r["qr_expires_at"])
+        else:
+            rem = calc_remaining_seconds(r["session_expires_at"])
+        my_res_info.append({"res": r, "remaining": rem})
+    return render_template("seats.html", zones=zones, my_res_info=my_res_info,
+                           format_remaining=format_remaining)
 
 
 @app.route("/seats/reserve/<int:seat_id>", methods=["POST"])
@@ -516,13 +517,6 @@ def reserve_seat(seat_id):
         return redirect(url_for("seat_map"))
     if seat["is_occupied"]:
         flash("이미 사용 중인 좌석입니다.", "error")
-        return redirect(url_for("seat_map"))
-    existing = db.execute(
-        "SELECT * FROM reservations WHERE user_id=? AND status IN ('reserved','checked_in')",
-        (session["user_id"],),
-    ).fetchone()
-    if existing:
-        flash("이미 예약 중인 좌석이 있습니다. 먼저 취소하거나 퇴실해주세요.", "error")
         return redirect(url_for("seat_map"))
 
     now = datetime.now()
@@ -590,40 +584,46 @@ def release_seat(seat_id):
 def my_qr():
     db = get_db()
     auto_expire_reservations(db)
-    res = db.execute(
+    reservations = db.execute(
         """SELECT r.*, s.seat_number, s.zone FROM reservations r
            JOIN seats s ON r.seat_id=s.id
            WHERE r.user_id=? AND r.status IN ('reserved','checked_in')
-           ORDER BY r.created_at DESC LIMIT 1""",
+           ORDER BY r.created_at DESC""",
         (session["user_id"],),
-    ).fetchone()
-    if not res:
+    ).fetchall()
+    if not reservations:
         flash("활성 예약이 없습니다. 먼저 좌석을 예약해주세요.", "error")
         return redirect(url_for("seat_map"))
 
     base_url = request.host_url.rstrip("/")
-    qr_data = f"{base_url}/qr/scan?token={res['qr_token']}"
-    qr_img = make_qr_base64(qr_data)
+    cards = []
+    for res in reservations:
+        qr_data = f"{base_url}/qr/scan?token={res['qr_token']}"
+        qr_img = make_qr_base64(qr_data)
 
-    # 남은 시간 계산
-    if res["status"] == "reserved":
-        remaining = calc_remaining_seconds(res["qr_expires_at"])
-        remaining_label = "체크인 만료까지"
-    else:
-        remaining = calc_remaining_seconds(res["session_expires_at"])
-        remaining_label = "이용 시간 종료까지"
+        if res["status"] == "reserved":
+            remaining = calc_remaining_seconds(res["qr_expires_at"])
+            remaining_label = "체크인 만료까지"
+        else:
+            remaining = calc_remaining_seconds(res["session_expires_at"])
+            remaining_label = "이용 시간 종료까지"
 
-    # 연장 정보
-    ext_count = res["extensions_count"] or 0
-    ext_remaining = max(0, MAX_EXTENSIONS - ext_count)
-    can_extend = (res["status"] == "checked_in" and ext_remaining > 0)
+        ext_count = res["extensions_count"] or 0
+        ext_remaining = max(0, MAX_EXTENSIONS - ext_count)
+        can_extend = (res["status"] == "checked_in" and ext_remaining > 0)
 
-    return render_template("my_qr.html", reservation=res, qr_img=qr_img,
-                           checkin_url=qr_data, remaining=remaining,
-                           remaining_label=remaining_label,
+        cards.append({
+            "reservation": res,
+            "qr_img": qr_img,
+            "checkin_url": qr_data,
+            "remaining": remaining,
+            "remaining_label": remaining_label,
+            "ext_remaining": ext_remaining,
+            "can_extend": can_extend,
+        })
+
+    return render_template("my_qr.html", cards=cards,
                            format_remaining=format_remaining,
-                           ext_remaining=ext_remaining,
-                           can_extend=can_extend,
                            EXTEND_MINUTES=EXTEND_MINUTES)
 
 
