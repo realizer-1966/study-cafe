@@ -32,6 +32,8 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "study_cafe.d
 # ---------------------------------------------------------------------------
 QR_EXPIRE_MINUTES = 120       # 예약 후 체크인 대기 시간 (2시간)
 SESSION_EXPIRE_MINUTES = 240  # 입실 후 이용 시간 (4시간)
+EXTEND_MINUTES = 60           # 1회 연장 시간 (1시간)
+MAX_EXTENSIONS = 2            # 최대 연장 횟수
 
 # ---------------------------------------------------------------------------
 # Database helpers
@@ -281,6 +283,12 @@ def init_db():
             "INSERT INTO users (username, email, password, is_admin) VALUES (?,?,?,1)",
             ("admin", "admin@studycafe.com", generate_password_hash("admin123")),
         )
+
+    # 마이그레이션: reservations 테이블에 extensions_count 컬럼 추가
+    cols = [row[1] for row in c.execute("PRAGMA table_info(reservations)").fetchall()]
+    if "extensions_count" not in cols:
+        c.execute("ALTER TABLE reservations ADD COLUMN extensions_count INTEGER DEFAULT 0")
+
     conn.commit()
     conn.close()
 
@@ -605,10 +613,18 @@ def my_qr():
         remaining = calc_remaining_seconds(res["session_expires_at"])
         remaining_label = "이용 시간 종료까지"
 
+    # 연장 정보
+    ext_count = res["extensions_count"] or 0
+    ext_remaining = max(0, MAX_EXTENSIONS - ext_count)
+    can_extend = (res["status"] == "checked_in" and ext_remaining > 0)
+
     return render_template("my_qr.html", reservation=res, qr_img=qr_img,
                            checkin_url=qr_data, remaining=remaining,
                            remaining_label=remaining_label,
-                           format_remaining=format_remaining)
+                           format_remaining=format_remaining,
+                           ext_remaining=ext_remaining,
+                           can_extend=can_extend,
+                           EXTEND_MINUTES=EXTEND_MINUTES)
 
 
 @app.route("/qr/<qr_token>.png")
@@ -725,6 +741,51 @@ def qr_checkout():
     db.commit()
     flash("출실 완료! 수고하셨습니다. 👋", "success")
     return redirect(url_for("qr_scan", token=token))
+
+
+@app.route("/seats/extend/<int:res_id>", methods=["POST"])
+@login_required
+def extend_session(res_id):
+    """이용 중인 세션 시간을 연장한다."""
+    db = get_db()
+    auto_expire_reservations(db)
+    res = db.execute(
+        "SELECT * FROM reservations WHERE id=? AND user_id=?",
+        (res_id, session["user_id"]),
+    ).fetchone()
+    if not res:
+        flash("예약을 찾을 수 없습니다.", "error")
+        return redirect(url_for("seat_map"))
+
+    if res["status"] != "checked_in":
+        flash("입실 중인 경우에만 시간 연장이 가능합니다.", "error")
+        return redirect(url_for("my_qr"))
+
+    ext_count = res["extensions_count"] or 0
+    if ext_count >= MAX_EXTENSIONS:
+        flash(f"연장은 최대 {MAX_EXTENSIONS}회까지만 가능합니다.", "error")
+        return redirect(url_for("my_qr"))
+
+    # 세션 만료 시간 갱신
+    current_expires = parse(res["session_expires_at"])
+    # 이미 만료되었으면 현재 시간 기준으로 연장
+    base_time = max(current_expires, datetime.now())
+    new_expires = base_time + timedelta(minutes=EXTEND_MINUTES)
+
+    db.execute(
+        "UPDATE reservations SET session_expires_at=?, extensions_count=? WHERE id=?",
+        (fmt(new_expires), ext_count + 1, res["id"]),
+    )
+    db.commit()
+
+    remaining_ext = MAX_EXTENSIONS - (ext_count + 1)
+    msg = f"시간이 {EXTEND_MINUTES}분 연장되었습니다. "
+    if remaining_ext > 0:
+        msg += f"남은 연장 횟수: {remaining_ext}회"
+    else:
+        msg += "더 이상 연장할 수 없습니다."
+    flash(msg, "success")
+    return redirect(url_for("my_qr"))
 
 
 # ---------------------------------------------------------------------------
